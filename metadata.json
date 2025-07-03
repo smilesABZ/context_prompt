@@ -1,0 +1,6 @@
+{
+  "name": "imagen-context-prompt",
+  "description": "chat and image gen simultaneously",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

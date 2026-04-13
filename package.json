@@ -9,8 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@excalidraw/excalidraw": "^0.17.6",
-    "@google/genai": "^1.0.1"
+    "@excalidraw/excalidraw": "^0.17.6"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

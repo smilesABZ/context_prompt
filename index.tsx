@@ -1,7 +1,9 @@
 
-import { GoogleGenAI, GenerateContentResponse, Chat } from "@google/genai";
-
 declare var JSZip: any; // Declare JSZip for TypeScript
+
+// Ollama configuration
+const OLLAMA_SERVER_URL = process.env.OLLAMA_SERVER_URL || 'http://localhost:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'mistral';
 
 // Declare DOM element variables - they will be assigned in the 'load' event
 let chatLog: HTMLDivElement | null = null;
@@ -28,20 +30,14 @@ let inputImagePreviewThumbnail: HTMLImageElement | null = null;
 let inputImagePreviewRemoveButton: HTMLButtonElement | null = null;
 
 let apiKeyOk = true;
-if (!process.env.API_KEY) {
-  apiKeyOk = false;
-  console.error("API_KEY is not set. Please set the API_KEY environment variable.");
-  // UI feedback for API key will be handled in 'load' listener
-}
+console.log(`Using Ollama server at: ${OLLAMA_SERVER_URL} with model: ${OLLAMA_MODEL}`);
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-
-let textChat: Chat | null = null;
-if (apiKeyOk) {
-  textChat = ai.chats.create({
-    model: 'gemini-2.5-flash-preview-04-17',
-  });
+// Store conversation history for Ollama
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
 }
+let conversationHistory: Message[] = [];
 
 interface ImageStyle {
   id: string;
@@ -437,25 +433,52 @@ async function handleChatInput(userMessage: string, imageForContext?: { dataUrl:
             addUserMessage(`Image Prompt: ${imageBasePrompt}`, { isImageRequest: true, imageRequestId });
             await generateImageWithPrompt(imageBasePrompt, imageBasePrompt, "Direct Prompt", imageRequestId);
         } else {
-            if (!textChat) {
-                addBotMessage("⚠️ Chat service is not available.");
-                return;
-            }
             addUserMessage(userMessage);
             const thinkingMessage = addBotMessage("Thinking...", true);
             try {
-            const response: GenerateContentResponse = await textChat.sendMessage({ message: userMessage });
-            if (thinkingMessage && thinkingMessage.parentNode) thinkingMessage.parentNode.removeChild(thinkingMessage);
-            addBotMessage(response.text);
+                // Add user message to conversation history
+                conversationHistory.push({
+                    role: 'user',
+                    content: userMessage
+                });
+
+                // Call Ollama API
+                const response = await fetch(`${OLLAMA_SERVER_URL}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: OLLAMA_MODEL,
+                        messages: conversationHistory,
+                        stream: false
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+                }
+
+                const data: any = await response.json();
+                const assistantMessage = data.message.content;
+
+                // Add assistant message to conversation history
+                conversationHistory.push({
+                    role: 'assistant',
+                    content: assistantMessage
+                });
+
+                if (thinkingMessage && thinkingMessage.parentNode) thinkingMessage.parentNode.removeChild(thinkingMessage);
+                addBotMessage(assistantMessage);
             } catch (error) {
                 console.error("Error sending chat message:", error);
                 if (thinkingMessage && thinkingMessage.parentNode) thinkingMessage.parentNode.removeChild(thinkingMessage);
                 let errorMessageText = "⚠️ An error occurred while trying to get a response. Please check the console.";
                 if (error instanceof Error) {
-                    if (error.message.includes("API key not valid")) {
-                        errorMessageText = "⚠️ API key is not valid. Please check your configuration.";
-                    } else if (error.message.includes("quota")) {
-                        errorMessageText = "⚠️ You have exceeded your API quota for text generation.";
+                    if (error.message.includes("Failed to fetch")) {
+                        errorMessageText = "⚠️ Could not connect to Ollama server. Make sure Ollama is running at " + OLLAMA_SERVER_URL;
+                    } else if (error.message.includes("Ollama API error")) {
+                        errorMessageText = "⚠️ Ollama server error: " + error.message;
                     }
                 }
                 addBotMessage(errorMessageText);

@@ -37,8 +37,8 @@ let inputImagePreviewContainer: HTMLDivElement | null = null;
 let inputImagePreviewThumbnail: HTMLImageElement | null = null;
 let inputImagePreviewRemoveButton: HTMLButtonElement | null = null;
 
-let apiKeyOk = true;
 console.log(`Using Ollama server at: ${OLLAMA_SERVER_URL} with model: ${OLLAMA_MODEL}`);
+console.log(`Using Stable Diffusion server at: ${SD_SERVER_URL}`);
 
 // Store conversation history for Ollama
 interface Message {
@@ -330,26 +330,38 @@ function addOrUpdateGallery(item?: GalleryImageInfo) {
 }
 
 async function generateImageWithPrompt(basePrompt: string, fullPrompt: string, styleApplied: string = "Direct Prompt", imageRequestId?: string): Promise<void> {
-  if (!apiKeyOk) {
-    addBotMessage("⚠️ Image generation is disabled because the API key is not configured.");
-    return;
-  }
-
   const thinkingMessage = addBotMessage(`🎨 Generating: "${basePrompt}" with style: ${styleApplied}, please wait...`, true);
   try {
-    const response = await ai.models.generateImages({
-      model: 'imagen-3.0-generate-002',
-      prompt: fullPrompt,
-      config: { numberOfImages: 1, outputMimeType: 'image/jpeg' },
+    const response = await fetch(`${SD_SERVER_URL}/sdapi/v1/txt2img`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: fullPrompt,
+        negative_prompt: "blurry, low quality, deformed, ugly",
+        steps: 20,
+        cfg_scale: 7,
+        width: 512,
+        height: 512,
+        sampler_name: "Euler a",
+        batch_size: 1,
+        n_iter: 1,
+      }),
     });
+
+    if (!response.ok) {
+      throw new Error(`Stable Diffusion API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
 
     if (thinkingMessage && thinkingMessage.parentNode) {
       thinkingMessage.parentNode.removeChild(thinkingMessage);
     }
 
-    if (response.generatedImages && response.generatedImages.length > 0) {
-      const base64ImageBytes = response.generatedImages[0].image.imageBytes;
-      const imageUrl = `data:image/jpeg;base64,${base64ImageBytes}`;
+    if (data.images && data.images.length > 0) {
+      const imageUrl = `data:image/png;base64,${data.images[0]}`;
 
       const botImageConfirmationId = `bot-confirm-${Date.now()}`;
       const confirmationMsg = addBotMessage(`🖼️ Image for "${basePrompt}" (${styleApplied}) generated and added to gallery.`, false, true, botImageConfirmationId);
@@ -359,7 +371,7 @@ async function generateImageWithPrompt(basePrompt: string, fullPrompt: string, s
         imageUrl: imageUrl,
         prompt: fullPrompt,
         basePrompt: basePrompt,
-        modelName: 'imagen-3.0-generate-002',
+        modelName: "Stable Diffusion",
         generationTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         styleApplied: styleApplied,
       };
@@ -380,7 +392,15 @@ async function generateImageWithPrompt(basePrompt: string, fullPrompt: string, s
     if (thinkingMessage && thinkingMessage.parentNode) {
       thinkingMessage.parentNode.removeChild(thinkingMessage);
     }
-    addBotMessage(`⚠️ An error occurred while generating an image for "${basePrompt}". Please check the console.`);
+    let errorMessage = `⚠️ An error occurred while generating an image for "${basePrompt}".`;
+    if (error instanceof Error) {
+      if (error.message.includes("Failed to fetch")) {
+        errorMessage += " Make sure Stable Diffusion web UI is running at " + SD_SERVER_URL;
+      } else {
+        errorMessage += " " + error.message;
+      }
+    }
+    addBotMessage(errorMessage);
   }
 }
 
@@ -388,7 +408,7 @@ const imageGenerationTriggers = ["generate image:", "create image of:", "draw:"]
 
 async function handleChatInput(userMessage: string, imageForContext?: { dataUrl: string; mimeType: string }): Promise<void> {
     if (!apiKeyOk) {
-        addBotMessage("⚠️ API key not configured. Chat and image features disabled.");
+        addBotMessage("⚠️ Local services not available.");
         return;
     }
 
@@ -403,26 +423,9 @@ async function handleChatInput(userMessage: string, imageForContext?: { dataUrl:
             return;
         }
 
-        const imagePart = {
-            inlineData: {
-                mimeType: imageDetails.mimeType,
-                data: imageDetails.base64,
-            },
-        };
-        const textPart = { text: userMessage };
-
-        try {
-            const response: GenerateContentResponse = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-preview-04-17',
-                contents: { parts: [imagePart, textPart] },
-            });
-            if (thinkingMessage && thinkingMessage.parentNode) thinkingMessage.parentNode.removeChild(thinkingMessage);
-            addBotMessage(response.text);
-        } catch (error) {
-            console.error("Error with multimodal chat:", error);
-            if (thinkingMessage && thinkingMessage.parentNode) thinkingMessage.parentNode.removeChild(thinkingMessage);
-            addBotMessage("⚠️ An error occurred while processing your request with the image. Please check the console.");
-        }
+        if (thinkingMessage && thinkingMessage.parentNode) thinkingMessage.parentNode.removeChild(thinkingMessage);
+        addBotMessage("⚠️ Image-context chat is not supported with local models. Please use text-only prompts.");
+        return;
     } else {
         const lowerUserMessage = userMessage.toLowerCase();
         let imageBasePrompt: string | null = null;
@@ -510,7 +513,7 @@ async function submitMessage(): Promise<void> {
     const messageText = userInput.value.trim();
 
     if (!apiKeyOk) {
-        addBotMessage("⚠️ API Key not configured. Cannot send message.");
+        addBotMessage("⚠️ Local services not available.");
         if (userInput) userInput.value = '';
         clearStagedImage();
         return;
@@ -535,7 +538,7 @@ function populateActionChips(): void {
   actionChipsContainer.innerHTML = '';
 
   if (!apiKeyOk) {
-      actionChipsContainer.innerHTML = '<p style="color: red; font-size: 0.8rem; padding-left: 10px;">API Key not configured. Image styles disabled.</p>';
+      actionChipsContainer.innerHTML = '<p style="color: red; font-size: 0.8rem; padding-left: 10px;">Local services not available.</p>';
       return;
   }
 
@@ -558,7 +561,7 @@ function populateContextualActionChips(): void {
     contextualActionChipsContainer.innerHTML = ''; // Clear any existing chips
 
     if (!apiKeyOk) {
-        console.log("Contextual chips not populated: API key is not configured (apiKeyOk is false).");
+        console.log("Contextual chips not populated: Local services not available.");
         contextualActionChipsContainer.style.display = 'none'; // Ensure it's hidden
         return;
     }
@@ -576,7 +579,7 @@ function populateContextualActionChips(): void {
 
 async function handleContextualActionChipClick(prompt: string): Promise<void> {
     if (!apiKeyOk) {
-        addBotMessage("⚠️ API Key not configured. Cannot perform this action.");
+        addBotMessage("⚠️ Local services not available.");
         return;
     }
     if (!stagedImageForChat) {
@@ -593,7 +596,7 @@ async function handleContextualActionChipClick(prompt: string): Promise<void> {
 
 async function handleStyleChipClick(style: ImageStyle): Promise<void> {
   if (!apiKeyOk) {
-    addBotMessage("⚠️ Image generation is disabled because the API key is not configured.");
+    addBotMessage("⚠️ Local services not available.");
     return;
   }
   if (userInput && userInput.value.trim() !== '') {
@@ -644,7 +647,7 @@ function hideContextMenu(): void {
 
 async function handleContextMenuItemClick(style: ImageStyle): Promise<void> {
   if (!apiKeyOk) {
-     addBotMessage("⚠️ Image generation from selection is disabled because the API key is not configured.");
+     addBotMessage("⚠️ Local services not available.");
      hideContextMenu();
      return;
   }
@@ -741,7 +744,7 @@ function toggleGallerySidebar(): void {
 
 async function downloadAllGalleryCards() {
     if (!apiKeyOk) {
-        addBotMessage("⚠️ API key not configured. Cannot download gallery cards.");
+        addBotMessage("⚠️ Local services not available.");
         return;
     }
     if (galleryItems.length === 0) {
@@ -838,9 +841,9 @@ window.addEventListener('load', () => {
 
     // API Key related UI updates
     if (!apiKeyOk) {
-        if (actionChipsContainer) actionChipsContainer.innerHTML = '<p style="color: red; font-size: 0.8rem; padding-left: 10px;">API Key not configured. Features disabled.</p>';
+        if (actionChipsContainer) actionChipsContainer.innerHTML = '<p style="color: red; font-size: 0.8rem; padding-left: 10px;">Local services not available.</p>';
         if (contextualActionChipsContainer) contextualActionChipsContainer.style.display = 'none';
-        if (galleryItemsContainer) galleryItemsContainer.innerHTML = '<p style="color: red; font-size: 0.8rem; padding: 10px;">API Key not configured. Gallery disabled.</p>';
+        if (galleryItemsContainer) galleryItemsContainer.innerHTML = '<p style="color: red; font-size: 0.8rem; padding: 10px;">Local services not available.</p>';
         if (downloadAllGalleryButton) downloadAllGalleryButton.disabled = true;
     }
 
@@ -879,7 +882,7 @@ window.addEventListener('load', () => {
             event.preventDefault();
             geminiInputBar.classList.remove('drop-target-active');
             if (!apiKeyOk) {
-                addBotMessage("⚠️ API Key not configured. Cannot use dropped image.");
+                addBotMessage("⚠️ Local services not available.");
                 return;
             }
 

@@ -3,7 +3,15 @@ declare var JSZip: any; // Declare JSZip for TypeScript
 
 // Ollama configuration
 const OLLAMA_SERVER_URL = process.env.OLLAMA_SERVER_URL || 'http://localhost:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'mistral';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma4:e4b';
+
+// Stable Diffusion configuration
+const SD_SERVER_URL = process.env.SD_SERVER_URL || 'http://localhost:7865';
+
+// Check if services are available
+let apiKeyOk = true; // Always true for local services
+console.log(`Using Ollama server at: ${OLLAMA_SERVER_URL} with model: ${OLLAMA_MODEL}`);
+console.log(`Using Stable Diffusion server at: ${SD_SERVER_URL}`);
 
 // Declare DOM element variables - they will be assigned in the 'load' event
 let chatLog: HTMLDivElement | null = null;
